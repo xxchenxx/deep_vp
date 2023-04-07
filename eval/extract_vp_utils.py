@@ -38,12 +38,12 @@ def intersection(l1, l2):
 
 
 def get_vp3(vp1, vp2, pp):
-    focal = np.sqrt(- np.dot(vp1 - pp, vp2 - pp))
 
+    focal = np.sqrt(- np.dot(vp1 - pp, vp2 - pp))
     vp1_w = np.concatenate((vp1, [focal]))
     vp2_w = np.concatenate((vp2, [focal]))
     pp_w = np.concatenate((pp, [0]))
-
+    
     vp3_w = np.cross(vp1_w-pp_w, vp2_w-pp_w)
     vp3 = vp3_w[0:2]/vp3_w[2] * focal + pp_w[0:2]
     return vp3
@@ -64,6 +64,7 @@ def tangent_point_poly(p, V):
 
 
 def get_pts_from_mask(mask, vp1, vp2):
+
     countours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2:]
     hull = cv2.convexHull(countours[0])
     pts = hull[:, 0, :]
@@ -160,12 +161,12 @@ def get_transform_matrix(vp1, vp2, image, im_w, im_h, pts=None, enforce_vp1=True
 
 def get_lp(img, mask):
     filtered_img = cv2.bilateralFilter(img, 9, 200, 50)
+
     # filtered_img = cv2.bilateralFilter(filtered_img, 9, 150, 50)
     gray_img = cv2.cvtColor(filtered_img, cv2.COLOR_BGR2GRAY)
 
     gray_mean = np.mean(gray_img[mask > 127])
-    cv2.waitKey(0)
-    mser = cv2.MSER_create(_delta=3, _max_variation=0.1)
+    mser = cv2.MSER_create(delta=3, max_variation=0.1)
 
     # regions, bboxes = mser.detectRegions(cv2.edgePreservingFilter(img))
     regions, bboxes = mser.detectRegions(filtered_img)
@@ -219,10 +220,35 @@ def get_lp(img, mask):
 
     return x_min, x_max
 
+class NumpyEncoder(json.JSONEncoder):
+    """ Custom encoder for numpy data types """
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+
+            return int(obj)
+
+        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            return float(obj)
+
+        elif isinstance(obj, (np.complex_, np.complex64, np.complex128)):
+            return {'real': obj.real, 'imag': obj.imag}
+
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+
+        elif isinstance(obj, (np.bool_)):
+            return bool(obj)
+
+        elif isinstance(obj, (np.void)): 
+            return None
+
+        return json.JSONEncoder.default(self, obj)
 
 def save(json_path, detection_list):
     with open(json_path, 'w') as f:
-        json.dump(detection_list, f)
+        json.dump(detection_list, f, ensure_ascii=False, cls=NumpyEncoder)
 
 
 class BatchVPDetectorBase():
@@ -237,17 +263,24 @@ class BatchVPDetectorBase():
 
     def process(self, frame, box, score, **kwargs):
         self.last_frame = frame
-
-        x_min = int(frame.shape[1] * box[1])
-        y_min = int(frame.shape[0] * box[0])
-        x_max = int(frame.shape[1] * box[3] + 1)
-        y_max = int(frame.shape[0] * box[2] + 1)
+        use_absolute_size = kwargs.get("use_absolute_size", False)
+        if not use_absolute_size:
+            x_min = int(frame.shape[1] * box[1])
+            y_min = int(frame.shape[0] * box[0])
+            x_max = int(frame.shape[1] * box[3] + 1)
+            y_max = int(frame.shape[0] * box[2] + 1)
+        else:
+            x_min = box[1]
+            y_min = box[0]
+            x_max = box[3]
+            y_max = box[2]
 
         box_center = np.array([x_min + x_max, y_min + y_max]) / 2
         box_scale = np.array([x_max - x_min, y_max - y_min]) / 2
         try:
             orig_car_img = frame[y_min:y_max, x_min:x_max, :]
             car_img = cv2.resize(orig_car_img, (self.input_size, self.input_size), cv2.INTER_CUBIC)
+
         except Exception as e:
             print("Caught exception:")
             print(str(e))
@@ -265,12 +298,13 @@ class BatchVPDetectorBase():
         if len(self.q) > 0:
             self.predict()
 
-    def get_lp_from_mask(self, item):
+    def get_lp_from_mask(self, item, use_absolute_box=False):
         item['lp1'] = None
         item['lp2'] = None
 
-        mask_frame = get_mask_frame(item['box'], self.last_frame, np.array(item['mask']))
-        _, mask_frame = cv2.threshold(mask_frame, 0.5, 255, cv2.THRESH_BINARY)
+        # mask_frame = get_mask_frame(item['box'], self.last_frame, np.array(item['mask']), use_absolute_box=use_absolute_box)
+        mask_frame = np.array(item['mask'])
+        _, mask_frame = cv2.threshold(mask_frame, 0.4, 255, cv2.THRESH_BINARY)
 
         del item['mask']
 
@@ -291,16 +325,15 @@ class BatchVPDetectorBase():
             return item
 
         mask_pts = get_pts_from_mask(mask_frame.astype(np.uint8), vp3, vp2)
-
-        # for p in mask_pts:
-        #     image = cv2.circle(image, (int(p[0]), int(p[1])), 3, (0, 0, 255), thickness=-1)
+        for p in mask_pts:
+            image = cv2.circle(image, (int(p[0]), int(p[1])), 3, (0, 0, 255), thickness=-1)
         # cv2.imshow("Img with mask pts", image)
 
         M, IM = get_transform_matrix(vp3, vp2, image, 300, 300, pts=mask_pts, vp_top=vp1)
 
         warped_image = cv2.warpPerspective(image, M, (300, 300))
         warped_mask = cv2.warpPerspective(mask_frame, M, (300, 300))
-
+        
         # cv2.imshow("warped image", warped_image)
         # cv2.waitKey(0)
 
@@ -315,8 +348,9 @@ class BatchVPDetectorBase():
         item['lp1'] = lps[0, 0, :].tolist()
         item['lp2'] = lps[1, 0, :].tolist()
 
-        # image = cv2.circle(image, (int(item['lp1'][0]), int(item['lp1'][1])), 3, (0, 0, 255), thickness=-1)
-        # image = cv2.circle(image, (int(item['lp2'][0]), int(item['lp2'][1])), 3, (0, 0, 255), thickness=-1)
+        image = cv2.circle(image, (int(item['lp1'][0]), int(item['lp1'][1])), 3, (0, 0, 255), thickness=-1)
+        image = cv2.circle(image, (int(item['lp2'][0]), int(item['lp2'][1])), 3, (0, 0, 255), thickness=-1)
+
         # cv2.imshow("Img with mask pts", image)
         # cv2.waitKey(0)
 
@@ -378,8 +412,9 @@ class BatchVPDetectorReg(BatchVPDetectorBase):
 
 
 class BatchVPDetectorHeatmap(BatchVPDetectorBase):
-    def __init__(self, model, args, scales):
+    def __init__(self, model, args, scales, use_absolute_box=False):
         self.scales = scales
+        self.use_absolute_box = use_absolute_box
         super(BatchVPDetectorHeatmap, self).__init__(model, args)
 
     def predict(self):
@@ -412,11 +447,10 @@ class BatchVPDetectorHeatmap(BatchVPDetectorBase):
             item['vp2'] = vp2.tolist()
 
             if 'mask' in item.keys():
-                item = self.get_lp_from_mask(item)
-
+                item = self.get_lp_from_mask(item, use_absolute_box=self.use_absolute_box)
+            
             del item['car_img']
             del item['orig_car_img']
-
             self.output_list.append(item)
 
         if self.debug:
@@ -425,7 +459,7 @@ class BatchVPDetectorHeatmap(BatchVPDetectorBase):
         self.q = []
 
 
-def filter_boxes_bcp(boxes, scores, frame, prev_edge, masks=None):
+def filter_boxes_bcp(boxes, scores, frame, prev_edge, masks=None, use_absolute_size=False):
     filtered_boxes = []
     filtered_scores = []
     filtered_masks = []
@@ -438,10 +472,16 @@ def filter_boxes_bcp(boxes, scores, frame, prev_edge, masks=None):
         edge_diff = np.abs(edge - prev_edge)
 
     for i, box in enumerate(boxes):
-        x_min = int(frame.shape[1] * box[1])
-        y_min = int(frame.shape[0] * box[0])
-        x_max = int(frame.shape[1] * box[3] + 1)
-        y_max = int(frame.shape[0] * box[2] + 1)
+        if not use_absolute_size:
+            x_min = int(frame.shape[1] * box[1])
+            y_min = int(frame.shape[0] * box[0])
+            x_max = int(frame.shape[1] * box[3] + 1)
+            y_max = int(frame.shape[0] * box[2] + 1)
+        else:
+            x_min = int(box[1])
+            y_min = int(box[0])
+            x_max = int(box[3] + 1)
+            y_max = int(box[2] + 1)
 
         edge_box = edge_diff[y_min: y_max, x_min: x_max]
         if np.mean(edge_box) > 5.0:

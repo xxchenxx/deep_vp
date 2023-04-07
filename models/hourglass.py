@@ -293,6 +293,8 @@ def parse_command_line():
     parser.add_argument('-b', '--batch_size', type=int, default=4, help='batch size')
     parser.add_argument('-bb', '--batch_size_eval', type=int, default=4, help='batch size for evaluation scripts')
     parser.add_argument('-n', '--num_stacks', type=int, default=2, help='number of stacks')
+    parser.add_argument('--start-frame', type=int, default=0)
+    parser.add_argument('--end-frame', type=int, default=-1)
     parser.add_argument('-i', '--input_size', type=int, default=128, help='size of input')
     parser.add_argument('-o', '--heatmap_size', type=int, default=64, help='size of output heatmaps')
     parser.add_argument('-e', '--epochs', type=int, default=50, help='max number of epochs')
@@ -315,6 +317,8 @@ def parse_command_line():
     parser.add_argument('--resize_imshow_frame_into', type=tuple, default=(800, 600),
                         help='this is for resizing the resulted image')
     # parser.add_argument('-s', '--steps', type=int, default=10000, help='steps per epoch')
-    parser.add_argument('path')
+    parser.add_argument('--video', type=str, help='video')
+    parser.add_argument('path', default='')
+    parser.add_argument('--model', default='simple')
     args = parser.parse_args()
     return args

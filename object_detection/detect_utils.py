@@ -35,11 +35,17 @@ def show_mask_debug(frame, boxes, masks):
         cv2.waitKey(0)
 
 
-def get_mask_frame(box, frame, mask):
-    x_min = frame.shape[1] * box[1]
-    y_min = frame.shape[0] * box[0]
-    x_max = frame.shape[1] * box[3]
-    y_max = frame.shape[0] * box[2]
+def get_mask_frame(box, frame, mask, use_absolute_box=False):
+    if not use_absolute_box:
+        x_min = frame.shape[1] * box[1]
+        y_min = frame.shape[0] * box[0]
+        x_max = frame.shape[1] * box[3]
+        y_max = frame.shape[0] * box[2]
+    else:
+        x_min = box[1]
+        y_min = box[0]
+        x_max = box[3]
+        y_max = box[2]
     rect_src = np.array([[0, 0], [mask.shape[1], 0], [mask.shape[1], mask.shape[0]], [0, mask.shape[0]]],
                         dtype=np.float32)
     rect_dst = np.array([[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]], dtype=np.float32)
